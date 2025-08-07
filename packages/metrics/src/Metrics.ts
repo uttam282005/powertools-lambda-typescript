@@ -140,6 +140,9 @@ import type {
  *
  */
 class Metrics extends Utility implements MetricsInterface {
+  // Flag to indicate internal call context
+  private static supressWarnings = false;
+
   /**
    * Console instance used to print logs.
    *
@@ -434,8 +437,11 @@ class Metrics extends Utility implements MetricsInterface {
    * @param functionName - Optional function name to use as `function_name` dimension in the metric. It's used only if the `functionName` constructor parameter or environment variable are not set.
    */
   public captureColdStartMetric(functionName?: string): void {
-    if (!this.getColdStart()) return;
-    const singleMetric = this.singleMetric();
+    //    if (!this.getColdStart()) return;
+
+    const singleMetric = Metrics.supressSetDefaultDimensionsWarnings(() =>
+      this.singleMetric()
+    );
 
     const value = this.functionName?.trim() ?? functionName?.trim();
     if (value && value.length > 0) {
@@ -834,17 +840,19 @@ class Metrics extends Utility implements MetricsInterface {
         isStringUndefinedNullEmpty(key) ||
         isStringUndefinedNullEmpty(value)
       ) {
-        this.#logger.warn(
-          `The dimension ${key} doesn't meet the requirements and won't be added. Ensure the dimension name and value are non empty strings`
-        );
+        if (!Metrics.supressWarnings) {
+          this.#logger.warn(
+            `The dimension ${key} doesn't meet the requirements and won't be added. Ensure the dimension name and value are non empty strings`
+          );
+        }
         continue;
       }
 
       if (Object.hasOwn(this.defaultDimensions, key)) {
         const currentValue = this.defaultDimensions[key];
-        const suppressOverwriteWarning =
+        const serviceOverwriteWarning =
           key === 'service' && currentValue === this.defaultServiceName;
-        if (!suppressOverwriteWarning) {
+        if (!serviceOverwriteWarning && !Metrics.supressWarnings) {
           this.#logger.warn(
             `Dimension "${key}" has already been added. The previous value will be overwritten.`
           );
@@ -1099,6 +1107,27 @@ class Metrics extends Utility implements MetricsInterface {
     this.isSingleMetric = singleMetric || false;
 
     return this;
+  }
+  /**
+   * Suppresses warning logs during internal calls to `setDefaultDimensions`.
+   *
+   * This utility is used to wrap internal logic that sets default dimensions
+   * (e.g., setting the `service` dimension internally) where we want to avoid
+   * emitting misleading or redundant warnings about overwriting dimensions.
+   *
+   * It temporarily sets `Metrics.supressWarnings = true` during the function execution,
+   * and ensures the flag is reset to `false` even if an error occurs (via `finally`).
+   *
+   * @param fn - The function to execute with warnings suppressed.
+   * @returns The return value of the wrapped function.
+   */
+  private static supressSetDefaultDimensionsWarnings<T>(fn: () => T): T {
+    Metrics.supressWarnings = true;
+    try {
+      return fn();
+    } finally {
+      Metrics.supressWarnings = false;
+    }
   }
 
   /**
